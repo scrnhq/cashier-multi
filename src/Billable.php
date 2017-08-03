@@ -58,11 +58,7 @@ trait Billable
             return $subscription->valid();
         }
 
-        if ($subscription->valid() and $subscription->stripe_plan === $plan) {
-            return true;
-        }
-
-        $plan = $this->subscriptionItems()->where('stripe_plan', $plan)->first();
+      $plan = $this->subscriptionItems()->where('stripe_plan', $plan)->first();
 
         if ($subscription->valid() and !is_null($plan)) {
             return true;
@@ -87,9 +83,6 @@ trait Billable
         }
 
         foreach ((array) $plans as $plan) {
-            if ($subscription->stripe_plan === $plan) {
-                return true;
-            }
             if ($subscription->hasItem($plan)) {
                 return true;
             }

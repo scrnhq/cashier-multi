@@ -86,7 +86,7 @@ class SubscriptionBuilder extends BaseSubscriptionBuilder
         ]);
 
         foreach ($stripeSubscription->items->data as $item) {
-            $subscription->subscriptionItems()->create([
+            $subscription->items()->create([
                 'stripe_id' => $item['id'],
                 'stripe_plan' => $item['plan']['id'],
                 'quantity' => $item['quantity'],
