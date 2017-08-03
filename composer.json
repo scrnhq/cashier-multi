@@ -1,28 +1,31 @@
 {
-    "name": "scrnhq/cashier-multi",
-    "keywords": ["laravel", "scrnhq", "cashier", "stripe", "billing"],
-    "license": "MIT",
-    "require": {
-        "php": ">=5.5.9",
-        "laravel/cashier": "^7.0"
-    },
-    "require-dev": {
-        "illuminate/http": "~5.3",
-        "illuminate/routing": "~5.3",
-        "illuminate/view": "~5.3",
-        "phpunit/phpunit": "~5.0",
-        "vlucas/phpdotenv": "~2.0"
-    },
-    "autoload": {
-        "psr-4": {
-            "ScrnHQ\\Cashier\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "ScrnHQ\\Cashier\\Tests\\": "tests/"
-        }
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+  "name": "scrnhq/cashier-multi",
+  "keywords": ["laravel", "scrnhq", "cashier", "stripe", "billing"],
+  "license": "MIT",
+  "require": {
+    "php": ">=5.5.9",
+    "laravel/cashier": "^7.0"
+  },
+  "require-dev": {
+    "illuminate/http": "~5.3",
+    "illuminate/routing": "~5.3",
+    "illuminate/view": "~5.3",
+    "phpunit/phpunit": "~5.0",
+    "vlucas/phpdotenv": "~2.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "ScrnHQ\\Cashier\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "ScrnHQ\\Cashier\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "coverage": "vendor/bin/phpunit --coverage-clover clover.xml --coverage-text"
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
 }
