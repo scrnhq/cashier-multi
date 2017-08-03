@@ -5,6 +5,7 @@ namespace ScrnHQ\Cashier\Tests;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use PHPUnit_Framework_TestCase;
+use ScrnHQ\Cashier\Subscription;
 use ScrnHQ\Cashier\Tests\Fixtures\User;
 use Illuminate\Database\Capsule\Manager as DB;
 use Illuminate\Database\Eloquent\Model as Eloquent;
@@ -66,7 +67,6 @@ class CashierTest extends PHPUnit_Framework_TestCase
     {
         $this->schema()->drop('users');
         $this->schema()->drop('subscriptions');
-        $this->schema()->drop('subscription_items');
     }
 
     /**
@@ -74,8 +74,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
      */
     public function testSubscriptionsCanBeCreated()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'single@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -96,6 +97,84 @@ class CashierTest extends PHPUnit_Framework_TestCase
         $this->assertFalse($user->subscription('main')->onGracePeriod());
 
         // Cancel Subscription
+        /** @var Subscription $subscription */
+        $subscription = $user->subscription('main');
+        $subscription->cancel();
+
+        $this->assertTrue($subscription->active());
+        $this->assertTrue($subscription->cancelled());
+        $this->assertTrue($subscription->onGracePeriod());
+
+        // Modify Ends Date To Past
+        $oldGracePeriod = $subscription->ends_at;
+        $subscription->fill(['ends_at' => Carbon::now()->subDays(5)])->save();
+
+        $this->assertFalse($subscription->active());
+        $this->assertTrue($subscription->cancelled());
+        $this->assertFalse($subscription->onGracePeriod());
+
+        $subscription->fill(['ends_at' => $oldGracePeriod])->save();
+
+        // Resume Subscription
+        $subscription->resume();
+
+        $this->assertTrue($subscription->active());
+        $this->assertFalse($subscription->cancelled());
+        $this->assertFalse($subscription->onGracePeriod());
+
+        // Increment & Decrement
+        $subscription->incrementQuantity();
+
+        $this->assertEquals(2, $subscription->quantity);
+
+        $subscription->decrementQuantity();
+
+        $this->assertEquals(1, $subscription->quantity);
+
+        // Swap Plan
+        $subscription->swap('monthly-10-2');
+
+        $this->assertEquals('monthly-10-2', $subscription->stripe_plan);
+
+        // Invoice Tests
+        $invoices = $user->invoices();
+        $invoice = $invoices[1];
+
+        $this->assertEquals('$10.00', $invoice->total());
+        $this->assertFalse($invoice->hasDiscount());
+        $this->assertFalse($invoice->hasStartingBalance());
+        $this->assertNull($invoice->coupon());
+        $this->assertInstanceOf(Carbon::class, $invoice->date());
+    }
+
+    public function testMultiSubscriptionsCanBeCreated()
+    {
+        /** @var User $user */
+        $user = User::create([
+            'email' => 'multi@test.com',
+            'name' => 'Taylor Otwell',
+        ]);
+
+        // Create Subscription
+        $user->newSubscription('main', 'monthly-10-1')
+            ->addPlan('monthly-10-2')->create($this->getTestToken());
+
+        $this->assertEquals(1, count($user->subscriptions));
+        $this->assertNotNull($user->subscription('main')->stripe_id);
+
+        $this->assertTrue($user->subscribed('main'));
+        $this->assertTrue($user->subscribedToPlan('monthly-10-1', 'main'));
+        $this->assertTrue($user->subscribedToPlan('monthly-10-2', 'main'));
+        $this->assertFalse($user->subscribedToPlan('monthly-10-1', 'something'));
+        $this->assertFalse($user->subscribedToPlan('monthly-10-3', 'main'));
+        $this->assertTrue($user->subscribed('main', 'monthly-10-1'));
+        $this->assertTrue($user->subscribed('main', 'monthly-10-2'));
+        $this->assertTrue($user->subscription('main')->active());
+        $this->assertFalse($user->subscription('main')->cancelled());
+        $this->assertFalse($user->subscription('main')->onGracePeriod());
+
+        // Cancel Subscription
+        /** @var Subscription $subscription */
         $subscription = $user->subscription('main');
         $subscription->cancel();
 
@@ -123,21 +202,27 @@ class CashierTest extends PHPUnit_Framework_TestCase
         // Increment & Decrement
         $subscription->getItem('monthly-10-1')->incrementQuantity();
 
-        $this->assertEquals(2, $subscription->quantity);
+        $this->assertEquals(2, $subscription->getItem('monthly-10-1')->quantity);
 
         $subscription->getItem('monthly-10-1')->decrementQuantity();
 
-        $this->assertEquals(1, $subscription->quantity);
+        $this->assertEquals(1, $subscription->getItem('monthly-10-1')->quantity);
 
-        // Swap Plan
-        $subscription->swap('monthly-10-2');
+        // Remove Plan
+        $subscription->removeItem('monthly-10-2');
 
-        $this->assertEquals('monthly-10-2', $subscription->stripe_plan);
+        $this->assertFalse($user->subscribedToPlan('monthly-10-2', 'main'));
+
+        // Add Plan
+        $subscription->addItem('monthly-10-2');
+
+        $this->assertTrue($user->subscribedToPlan('monthly-10-2', 'main'));
 
         // Invoice Tests
-        $invoice = $user->invoices()[1];
+        $invoices = $user->invoices();
+        $invoice = $invoices[0];
 
-        $this->assertEquals('$10.00', $invoice->total());
+        $this->assertEquals('$20.00', $invoice->total());
         $this->assertFalse($invoice->hasDiscount());
         $this->assertFalse($invoice->hasStartingBalance());
         $this->assertNull($invoice->coupon());
@@ -146,8 +231,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
 
     public function test_creating_subscription_with_coupons()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'coupons@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -155,6 +241,7 @@ class CashierTest extends PHPUnit_Framework_TestCase
         $user->newSubscription('main', 'monthly-10-1')
             ->withCoupon('coupon-1')->create($this->getTestToken());
 
+        /** @var Subscription $subscription */
         $subscription = $user->subscription('main');
 
         $this->assertTrue($user->subscribed('main'));
@@ -185,8 +272,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
 
     public function test_creating_subscription_with_trial()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'trial@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -194,6 +282,7 @@ class CashierTest extends PHPUnit_Framework_TestCase
         $user->newSubscription('main', 'monthly-10-1')
             ->trialDays(7)->create($this->getTestToken());
 
+        /** @var Subscription $subscription */
         $subscription = $user->subscription('main');
 
         $this->assertTrue($subscription->active());
@@ -217,8 +306,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
 
     public function test_creating_subscription_with_explicit_trial()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'extrial@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -226,6 +316,7 @@ class CashierTest extends PHPUnit_Framework_TestCase
         $user->newSubscription('main', 'monthly-10-1')
             ->trialUntil(Carbon::tomorrow()->hour(3)->minute(15))->create($this->getTestToken());
 
+        /** @var Subscription $subscription */
         $subscription = $user->subscription('main');
 
         $this->assertTrue($subscription->active());
@@ -249,8 +340,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
 
     public function test_applying_coupons_to_existing_customers()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'excoupon@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -270,8 +362,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
      */
     public function test_marking_as_cancelled_from_webhook()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'webhook@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -303,8 +396,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
 
     public function testCreatingOneOffInvoices()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'oneoff@test.com',
             'name' => 'Taylor Otwell',
         ]);
 
@@ -320,8 +414,9 @@ class CashierTest extends PHPUnit_Framework_TestCase
 
     public function testRefunds()
     {
+        /** @var User $user */
         $user = User::create([
-            'email' => 'taylor@laravel.com',
+            'email' => 'refund@test.com',
             'name' => 'Taylor Otwell',
         ]);
 

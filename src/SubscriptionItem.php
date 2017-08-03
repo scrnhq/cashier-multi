@@ -86,8 +86,6 @@ class SubscriptionItem extends Model
 
         $subscriptionItem->quantity = $quantity;
 
-        $subscriptionItem->prorate = $this->subscription->prorate;
-
         $subscriptionItem->save();
 
         $this->quantity = $quantity;

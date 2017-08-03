@@ -12,9 +12,24 @@ class Subscription extends BaseSubscription
      *
      * @return \Illuminate\Database\Eloquent\Relations\HasMany
      */
-    public function subscriptionItems()
+    public function items()
     {
         return $this->hasMany(SubscriptionItem::class)->orderBy('created_at', 'desc');
+    }
+
+    public function getStripePlanAttribute()
+    {
+        return $this->getSingleSubscriptionItem()->stripe_plan;
+    }
+
+    /**
+     *
+     * @deprecated Access must me made to individual items.
+     * @return int
+     */
+    public function getQuantityAttribute()
+    {
+        return $this->getSingleSubscriptionItem()->quantity;
     }
 
     /**
@@ -27,7 +42,16 @@ class Subscription extends BaseSubscription
      */
     public function updateQuantity($quantity, $customer = null)
     {
-        trigger_error("Deprecation error. Updates should be performed on subscription items.", E_USER_NOTICE);
+        $item = $this->getSingleSubscriptionItem();
+
+        $stripeItem = $item->asStripeSubscriptionItem();
+        $stripeItem->quantity = $quantity;
+        $stripeItem->prorate = $this->prorate;
+        $stripeItem->save();
+
+        $item->quantity = $quantity;
+        $item->save();
+
         return $this;
     }
 
@@ -40,15 +64,55 @@ class Subscription extends BaseSubscription
      */
     public function swap($plan)
     {
-        trigger_error("Deprecation error. Updates should be performed on subscription items.", E_USER_NOTICE);
+        $item = $this->getSingleSubscriptionItem();
+
+        $subscription = $this->asStripeSubscription();
+
+        $stripeItem = $item->asStripeSubscriptionItem();
+
+        $stripeItem->plan = $plan;
+
+        $stripeItem->prorate = $this->prorate;
+
+        if (! is_null($this->billingCycleAnchor)) {
+            $subscription->billingCycleAnchor = $this->billingCycleAnchor;
+        }
+
+        // If no specific trial end date has been set, the default behavior should be
+        // to maintain the current trial state, whether that is "active" or to run
+        // the swap out with the exact number of days left on this current plan.
+        if ($this->onTrial()) {
+            $subscription->trial_end = $this->trial_ends_at->getTimestamp();
+        } else {
+            $subscription->trial_end = 'now';
+        }
+
+        // Again, if no explicit quantity was set, the default behaviors should be to
+        // maintain the current quantity onto the new plan. This is a sensible one
+        // that should be the expected behavior for most developers with Stripe.
+        if ($item->quantity) {
+            $stripeItem->quantity = $item->quantity;
+        }
+
+        $subscription->save();
+        $stripeItem->save();
+
+        $this->user->invoice();
+
+        $item->fill([
+            'stripe_plan' => $plan,
+        ])->save();
+
         return $this;
     }
 
     /**
-     * Adds
+     * Add a plan to the subscription.
+     *
      * @param $plan
      * @param int $quantity
      * @param bool $prorate
+     * @return $this
      */
     public function addItem($plan, $quantity = 1, $prorate = true)
     {
@@ -60,21 +124,25 @@ class Subscription extends BaseSubscription
             'quantity' => $quantity,
         ]);
 
-        $this->subscriptionItems()->create([
+        $this->items()->create([
             'stripe_id' => $subscriptionItem->id,
             'stripe_plan' => $plan,
             'quantity' => $quantity,
         ]);
+
+        return $this;
     }
 
     /**
+     * Remove a plan from the subscription.
+     *
      * @param $plan
      * @param bool $prorate
      * @return $this
      */
     public function removeItem($plan, $prorate = true)
     {
-        $item = $this->subscriptionItems()->where('stripe_plan', $plan)->first();
+        $item = $this->getItem($plan);
 
         if (is_null($item)) {
             return $this;
@@ -86,20 +154,33 @@ class Subscription extends BaseSubscription
             'prorate' => $prorate,
         ]);
 
-        $this->subscriptionItems()->where('stripe_plan', $plan)->delete();
+        $this->items()->where('stripe_plan', $plan)->delete();
 
         return $this;
     }
 
     /**
-     * Determine if the subscription is on the given plan.
+     * Determine if the subscription has the given plan.
      *
      * @param $plan
      * @return bool
      */
     public function hasItem($plan)
     {
-        return !!$this->subscriptionItems()->where('stripe_plan', $plan)->first();
+        return $this->items()->where('stripe_plan', $plan)->count() > 0;
+    }
+
+    /**
+     * Get the subscription item if there is only one item attached.
+     *
+     * @return SubscriptionItem
+     */
+    public function getSingleSubscriptionItem()
+    {
+        if (count($this->items) !== 1) {
+            throw new LogicException('Cannot retrieve the single subscription item if there are multiple plans attached.');
+        }
+        return $this->items()->first();
     }
 
     /**
@@ -109,7 +190,7 @@ class Subscription extends BaseSubscription
      */
     public function getItem($plan)
     {
-        return $this->subscriptionItems()->where('stripe_plan', $plan)->first();
+        return $this->items()->where('stripe_plan', $plan)->firstOrFail();
     }
 
     /**
